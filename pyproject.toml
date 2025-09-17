@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "custom-tools"
-version = "0.2.1"
+version = "0.2.2"
 description = "Personal utility package with some of my random tools"
 readme = "README.md"
 requires-python = ">=3.9"
