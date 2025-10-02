@@ -8,36 +8,36 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm.auto import tqdm
 
+_default_costs = {
+    "gpt-5": (1.25, 10.00),
+    "gpt-5-mini": (0.25, 2.00),
+    "gpt-5-nano": (0.05, 0.40),
+    "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "o4-mini": (1.10, 4.40),
+    "claude-3-7-sonnet": (3.00, 15.00),
+    "claude-3-5-haiku": (0.80, 4.00),
+};
+
+def get_cost(model: str) -> Tuple[float, float]:
+    if model not in _default_costs:
+        raise ValueError(f"Unknown model: {model}");
+    ic, oc = _default_costs[model];
+    return ic / 1_000_000, oc / 1_000_000;
+
+def get_keys() -> Tuple[Optional[str], Optional[str]]:
+    return os.environ.get("OPENAI_API_KEY"), os.environ.get("ANTHROPIC_API_KEY"); 
+
 def single_call(system_prompt: str, user_prompt: str, labels: Optional[List[str]] = None, images: Optional[List[str]] = None, model: str = "gpt-5", max_tokens: int = 2000, temp: float = 0.0, force_json: bool = False, web_search: bool = False) -> Dict[str, Any]:
     gpt_models = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini"];
     claude_models = ["claude-3-7-sonnet", "claude-3-5-haiku"];
 
-    _default_costs = {
-        "gpt-5": (1.25, 10.00),
-        "gpt-5-mini": (0.25, 2.00),
-        "gpt-5-nano": (0.05, 0.40),
-        "gpt-4.1-nano": (0.10, 0.40),
-        "gpt-4o": (2.50, 10.00),
-        "gpt-4o-mini": (0.15, 0.60),
-        "o4-mini": (1.10, 4.40),
-        "claude-3-7-sonnet": (3.00, 15.00),
-        "claude-3-5-haiku": (0.80, 4.00),
-    };
-
-    def get_cost(model: str) -> Tuple[float, float]:
-        if model not in _default_costs:
-            raise ValueError(f"Unknown model: {model}");
-        ic, oc = _default_costs[model];
-        return ic / 1_000_000, oc / 1_000_000;
-
-    def _get_keys() -> Tuple[Optional[str], Optional[str]]:
-        return os.environ.get("OPENAI_API_KEY"), os.environ.get("ANTHROPIC_API_KEY"); 
-    
     ic, oc = get_cost(model);
     if labels is not None:
         lbl = "; ".join(labels) if isinstance(labels, list) else str(labels);
-        assistant_prompt = system_prompt.replace("<\\labels\\>", lbl);
-    openai_key, anthropic_key = _get_keys();
+        system_prompt = system_prompt.replace("<\\labels\\>", lbl);
+    openai_key, anthropic_key = get_keys();
     if model in gpt_models:
         if not openai_key:
             raise RuntimeError("OPENAI_API_KEY missing");
@@ -105,6 +105,9 @@ def single_call(system_prompt: str, user_prompt: str, labels: Optional[List[str]
 def multi_call(df: pd.DataFrame, max_workers: int=10, labels: Optional[List[str]]=None, images: Optional[List[str]]=None, model: str = "gpt-5", max_tokens: int = 2000, temp: float = 0.0, force_json: bool = False, web_search: bool = False) -> pd.DataFrame:
     if "system_prompt" not in df.columns or "user_prompt" not in df.columns:
         raise ValueError("DataFrame must contain 'system_prompt' and 'user_prompt' columns");
+    ic, oc = get_cost(model);
+    total_input_tokens = 0;
+    total_output_tokens = 0;
     out = df.copy();
     out["response"] = None;
     futures = {};
@@ -116,9 +119,13 @@ def multi_call(df: pd.DataFrame, max_workers: int=10, labels: Optional[List[str]
             idx = futures[fut];
             try:
                 res = fut.result();
+                total_input_tokens += int(res.get("input_tokens", 0) or 0);
+                total_output_tokens += int(res.get("output_tokens", 0) or 0);
                 out.at[idx, "response"] = res.get("response", "");
             except Exception as e:
                 out.at[idx, "response"] = str(e);
             pbar.update(1);
         pbar.close();
+    total_cost = ic * total_input_tokens + oc * total_output_tokens;
+    print(f"Total cost: ${total_cost:.4f}");
     return out
