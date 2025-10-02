@@ -9,7 +9,7 @@ def embed(df:pd.DataFrame, model="text-embedding-3-large"):
         raise RuntimeError("OPENAI_API_KEY not found in environment.");
     client = OpenAI();
 
-    descs = df["description"].tolist();
+    descs = df["text"].tolist();
     embeddings = [];
     for i in tqdm(range(0, len(descs), 64), desc="Embedding texts..."):
         batch = descs[i:i + 64];
@@ -24,9 +24,9 @@ def embed(df:pd.DataFrame, model="text-embedding-3-large"):
     df_emb = pd.concat([df.reset_index(drop=True), embed_df], axis=1);
     return df_emb
 
-def cosine_similarity(df1, df2, descriptions=False):
-    if descriptions and ("description" not in df1.columns or "description" not in df2.columns):
-        raise RuntimeError("'description' column not found.");
+def cosine_similarity(df1:pd.DataFrame, df2:pd.DataFrame, descriptions=False):
+    if descriptions and ("text" not in df1.columns or "text" not in df2.columns):
+        raise RuntimeError("'text' column not found.");
     emb1_cols = [c for c in df1.columns if c.startswith("d") and c[1:].isdigit()];
     emb2_cols = [c for c in df2.columns if c.startswith("d") and c[1:].isdigit()];
     X1 = df1[emb1_cols].to_numpy(dtype=np.float64);
@@ -43,9 +43,9 @@ def cosine_similarity(df1, df2, descriptions=False):
     if descriptions:
         res = pd.DataFrame({
             "from": df1.loc[i, "id"].to_numpy(),
-            "from_desc": df1.loc[i, "description"].to_numpy(),
+            "from_desc": df1.loc[i, "text"].to_numpy(),
             "to": df2.loc[j, "id"].to_numpy(),
-            "to_desc": df2.loc[j, "description"].to_numpy(),
+            "to_desc": df2.loc[j, "text"].to_numpy(),
             "similarity": long["similarity"].to_numpy()
         })
     else:

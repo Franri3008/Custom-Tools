@@ -8,7 +8,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm.auto import tqdm
 
-def single_call(assistant_prompt: str, user_prompt: str, labels: Optional[List[str]] = None, images: Optional[List[str]] = None, model: str = "gpt-5", max_tokens: int = 2000, temp: float = 0.0, force_json: bool = False) -> Tuple[str, Dict[str, Any]]:
+def single_call(system_prompt: str, user_prompt: str, labels: Optional[List[str]] = None, images: Optional[List[str]] = None, model: str = "gpt-5", max_tokens: int = 2000, temp: float = 0.0, force_json: bool = False, web_search: bool = False) -> Dict[str, Any]:
     gpt_models = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini"];
     claude_models = ["claude-3-7-sonnet", "claude-3-5-haiku"];
 
@@ -36,13 +36,32 @@ def single_call(assistant_prompt: str, user_prompt: str, labels: Optional[List[s
     ic, oc = get_cost(model);
     if labels is not None:
         lbl = "; ".join(labels) if isinstance(labels, list) else str(labels);
-        assistant_prompt = assistant_prompt.replace("<\\labels\\>", lbl);
+        assistant_prompt = system_prompt.replace("<\\labels\\>", lbl);
     openai_key, anthropic_key = _get_keys();
     if model in gpt_models:
         if not openai_key:
             raise RuntimeError("OPENAI_API_KEY missing");
         client = OpenAI(api_key=openai_key);
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": assistant_prompt}];
+        if model == "gpt-5" and web_search and not hasattr(client, "responses"):
+            raise RuntimeError("openai package without Responses API; upgrade `openai` to use web_search. See https://platform.openai.com/docs/api-reference/responses");
+        if model == "gpt-5" and web_search:
+            sys_text = system_prompt if not force_json else system_prompt + "\nRespond with valid JSON only.";
+            content_parts: List[Dict[str, Any]] = [];
+            if images:
+                for url in images:
+                    content_parts.append({"type": "input_image", "image_url": url});
+            content_parts.append({"type": "input_text", "text": user_prompt});
+            resp = client.responses.create(model=model, instructions=sys_text, input=[{"role": "user", "content": content_parts}], tools=[{"type": "web_search"}], max_output_tokens=max_tokens, temperature=temp or 0.0);
+            raw = getattr(resp, "output_text", None);
+            if not raw:
+                raw = "".join([c.text for item in getattr(resp, "output", []) if getattr(item, "type", "") == "message" for c in getattr(item, "content", []) if getattr(c, "type", "") == "output_text"]);
+            content = json.loads(raw) if force_json else raw;
+            usage = getattr(resp, "usage", None);
+            input_tokens = int(getattr(usage, "input_tokens", 0) or getattr(usage, "prompt_tokens", 0) or 0);
+            output_tokens = int(getattr(usage, "output_tokens", 0) or getattr(usage, "completion_tokens", 0) or 0);
+            total_cost = ic * input_tokens + oc * output_tokens;
+            return {"prompt": system_prompt + user_prompt, "response": content, "input_tokens": input_tokens, "output_tokens": output_tokens, "input_cost": f"${ic*input_tokens:.4f}", "output_cost": f"${oc*output_tokens:.4f}", "total_cost": f"${total_cost:.4f}"};
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}];
         user_content: List[Dict[str, Any]] = [];
         if images:
             for url in images:
@@ -71,7 +90,7 @@ def single_call(assistant_prompt: str, user_prompt: str, labels: Optional[List[s
             for url in images:
                 content_parts.append({"type": "image", "source": {"type": "url", "url": url}});
         content_parts.append({"type": "text", "text": user_prompt});
-        sys = assistant_prompt if not force_json else assistant_prompt + "\nRespond with valid JSON only.";
+        sys = system_prompt if not force_json else system_prompt + "\nRespond with valid JSON only.";
         resp = client.messages.create(model=model, system=sys, messages=[{"role": "user", "content": content_parts}], max_tokens=max_tokens, temperature=temp);
         raw = "".join([c.text for c in resp.content if c.type == "text"]);
         content = json.loads(raw) if force_json else raw;
@@ -80,10 +99,10 @@ def single_call(assistant_prompt: str, user_prompt: str, labels: Optional[List[s
     else:
         raise ValueError(f"Unsupported model: {model}");
     total_cost = ic * input_tokens + oc * output_tokens;
-    return assistant_prompt + user_prompt, {"content": content, "input_tokens": input_tokens, "output_tokens": output_tokens, "input_cost": f"${ic*input_tokens:.4f}", "output_cost": f"${oc*output_tokens:.4f}", "total_cost": f"${total_cost:.4f}"};
+    return {"prompt": system_prompt + user_prompt, "response": content, "input_tokens": input_tokens, "output_tokens": output_tokens, "input_cost": f"${ic*input_tokens:.4f}", "output_cost": f"${oc*output_tokens:.4f}", "total_cost": f"${total_cost:.4f}"}
 
 
-def multi_call(df: pd.DataFrame, max_workers: int=10, labels: Optional[List[str]]=None, images: Optional[List[str]]=None, model: str = "gpt-5", max_tokens: int = 2000, temp: float = 0.0, force_json: bool = False) -> pd.DataFrame:
+def multi_call(df: pd.DataFrame, max_workers: int=10, labels: Optional[List[str]]=None, images: Optional[List[str]]=None, model: str = "gpt-5", max_tokens: int = 2000, temp: float = 0.0, force_json: bool = False, web_search: bool = False) -> pd.DataFrame:
     if "system_prompt" not in df.columns or "user_prompt" not in df.columns:
         raise ValueError("DataFrame must contain 'system_prompt' and 'user_prompt' columns");
     out = df.copy();
@@ -91,13 +110,13 @@ def multi_call(df: pd.DataFrame, max_workers: int=10, labels: Optional[List[str]
     futures = {};
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for idx, row in out.iterrows():
-            futures[executor.submit(single_call, str(row["system_prompt"]), str(row["user_prompt"]), labels, images, model, max_tokens, temp, force_json)] = idx;
+            futures[executor.submit(single_call, str(row["system_prompt"]), str(row["user_prompt"]), labels, images, model, max_tokens, temp, force_json, web_search)] = idx;
         pbar = tqdm(total=len(futures));
         for fut in as_completed(futures):
             idx = futures[fut];
             try:
-                _, meta = fut.result();
-                out.at[idx, "response"] = meta.get("content", "");
+                res = fut.result();
+                out.at[idx, "response"] = res.get("response", "");
             except Exception as e:
                 out.at[idx, "response"] = str(e);
             pbar.update(1);
