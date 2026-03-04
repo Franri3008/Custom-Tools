@@ -1,8 +1,88 @@
 Metadata-Version: 2.4
 Name: custom-tools
-Version: 0.2.3
+Version: 0.2.5
 Summary: Personal utility package with some of my random tools
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
 
-:D
+# Custom-Tools
+
+A personal utility package containing a collection of random tools for everyday data processing, file handling, and LLM workflows
+
+## Installation
+
+You can install this package directly from GitHub using `pip`:
+
+```bash
+pip install git+https://github.com/Franri3008/Custom-Tools.git
+```
+
+Alternatively, you can install it locally. Navigate to the root directory of this repository and run:
+
+```bash
+pip install .
+```
+
+For development, you can install it in editable mode:
+
+```bash
+pip install -e .
+```
+
+### Environment Variables
+
+If you plan on using the LLM modules, you need to set up the following environment variables:
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+## Available Tools
+
+The tools are categorized into two main modules: `general` and `llm`.
+
+### 1. General Tools (`CustomTools.general`)
+
+This module includes helpers for file operations, primarily for working with PDFs and Images.
+
+**`CustomTools.general.file_handling`**
+- `pdf_to_image(input_path, output_path="./", scale=1, fmt="png")`: Converts each page of a PDF document into an image.
+- `image_to_pdf(input_path, output_path="./")`: Converts supported image formats into a single-page PDF.
+- `split_pdf(input_path, output_path="./", ranges="")`: Extracts specific pages or ranges from a PDF and saves them as separate PDF documents.
+
+### 2. LLM Tools (`CustomTools.llm`)
+
+This module helps streamline and manage API calls securely for both OpenAI and Anthropic models, with built-in token cost estimation functionality.
+
+**`CustomTools.llm.calling`**
+- `single_call(...)`: Executes a single synchronous LLM prompt. Supports structured outputs, image vision, web search, and returns detailed cost estimates and token usage.
+- `multi_call(...)`: Executes multiple LLM requests concurrently using multi-threading on a Pandas DataFrame and calculates total costs.
+
+**`CustomTools.llm.batching`**
+Useful for large scale, asynchronous batch tasks (currently implemented using the respective OpenAI/Anthropic Batch APIs).
+- `BatchUploader`: Uploads files and launches batch tasks from dataframes.
+- `BatchChecker`: Polls to monitor processing completions.
+- `BatchRetriever`: Fetches results safely back into data structures.
+
+**`CustomTools.llm.embedding`**
+- `embed(df, model="text-embedding-3-large")`: Processes lists of texts and computes OpenAI embeddings in batches.
+- `cosine_similarity(df1, df2, descriptions=False)`: Calculates similarities between datasets. Useful for comparing semantic embeddings efficiently.
+
+---
+
+### Basic Usage Example
+
+```python
+import pandas as pd
+from CustomTools.llm.calling import single_call, multi_call
+
+# Single Call
+response = single_call(
+    system_prompt="You are a helpful assistant.",
+    user_prompt="Explain quantum physics in one sentence.",
+    model="gpt-4o"
+)
+print(response["response"])
+
+# PDF to Images
+from CustomTools.general.file_handling import pdf_to_image
+images = pdf_to_image("report.pdf", output_path="./output/")
+```
